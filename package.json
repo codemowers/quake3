@@ -1,0 +1,20 @@
+{
+  "name": "quake3-source-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "GPL-2.0-or-later",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "openid-client": "6.8.8",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "globals": "17.13.0"
+  }
+}

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quake III Arena</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23111'/%3E%3Ctext x='32' y='46' text-anchor='middle' font-family='serif' font-size='44' fill='%23c33'%3EQ%3C/text%3E%3C/svg%3E">
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw !important;
+      height: 100vh !important;
+      object-fit: contain;
+    }
+    #status {
+      position: fixed;
+      z-index: 1;
+      inset: 1rem;
+      overflow: hidden;
+      color: #ddd;
+      font: 14px/1.35 monospace;
+      white-space: pre-wrap;
+      pointer-events: none;
+      text-shadow: 0 1px 2px #000;
+    }
+    #reconnect, #game-password {
+      position: fixed;
+      z-index: 2;
+      top: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 1rem;
+      background: #111e;
+      color: #fff;
+      font: 16px sans-serif;
+      text-align: center;
+    }
+    #game-password input { display: block; margin: .75rem auto; padding: .5rem; }
+    #reconnect button, #game-password button { margin-top: .5rem; padding: .5rem 1rem; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <pre id="status">Starting…</pre>
+  <div id="reconnect" hidden role="status">
+    <div id="reconnect-message"></div>
+    <button id="reconnect-login" hidden>Sign in to reconnect</button>
+  </div>
+  <form id="game-password" hidden>
+    <label for="game-password-input">Game password</label>
+    <input id="game-password-input" type="password" autocomplete="off" required pattern="[A-Za-z0-9]{1,64}" maxlength="64">
+    <button type="submit">Join game</button>
+  </form>
+  <script type="module">
+    import {createConnectionRecovery} from './reconnect.js';
+    const canvas = document.querySelector('#canvas');
+    const status = document.querySelector('#status');
+    const loadingLines = [];
+    const loadingLog = (message, replace = false) => {
+      if (replace && loadingLines.length) loadingLines.pop();
+      loadingLines.push(String(message));
+      if (loadingLines.length > 24) loadingLines.shift();
+      status.textContent = loadingLines.join('\n');
+    };
+    addEventListener('unhandledrejection', (event) => {
+      loadingLog(`ERROR: ${event.reason?.message || event.reason}`);
+    });
+    const json = async (url) => {
+      loadingLog(`Loading ${url}`);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Could not load ${url}`);
+      return response.json();
+    };
+    const bytes = async (url) => {
+      loadingLog(`Downloading ${url}`);
+      const response = await fetch(url, {cache: url.startsWith('/qvm/') ? 'no-store' : 'default'});
+      if (!response.ok) throw new Error(`Could not load ${url}`);
+      if (!response.body) return new Uint8Array(await response.arrayBuffer());
+
+      const total = Number.parseInt(response.headers.get('content-length') || '0', 10);
+      const chunks = [];
+      let received = 0;
+      const reader = response.body.getReader();
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.byteLength;
+        const progress = total ? ` / ${(total / 1048576).toFixed(1)} MiB` : '';
+        loadingLog(`Downloading ${url}: ${(received / 1048576).toFixed(1)} MiB${progress}`, true);
+      }
+      const result = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      loadingLog(`Loaded ${url}`);
+      return result;
+    };
+    const quakePlayerName = (identity) => {
+      const value = String(identity?.subject || 'Player')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^\x20-\x7e]/g, '')
+        .replace(/[\\";]/g, '')
+        .trim()
+        .slice(0, 31);
+      return value || 'Player';
+    };
+    const [configuration, identity, gameInfo] = await Promise.all([
+      json('/client-config.json'),
+      json('/auth/me'),
+      json('/auth/game-info')
+    ]);
+    let gamePassword = '';
+    if (gameInfo.passwordRequired) {
+      const form = document.querySelector('#game-password');
+      const input = document.querySelector('#game-password-input');
+      form.hidden = false;
+      input.focus();
+      gamePassword = await new Promise((resolve) => {
+        form.addEventListener('submit', (event) => {
+          event.preventDefault();
+          if (/^[A-Za-z0-9]{1,64}$/.test(input.value)) resolve(input.value);
+        });
+      });
+      input.value = '';
+      form.hidden = true;
+    }
+    const game = Object.keys(configuration)[0] || 'baseq3';
+    const playerName = quakePlayerName(identity);
+    loadingLog(identity.authenticated
+      ? `Authenticated via ${identity.providerName} as ${playerName}`
+      : `Playing as ${playerName}`);
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const reconnectPanel = document.querySelector('#reconnect');
+    const reconnectMessage = document.querySelector('#reconnect-message');
+    const loginButton = document.querySelector('#reconnect-login');
+    let loginWindow;
+    loginButton.addEventListener('click', () => {
+      if (loginWindow && !loginWindow.closed) return loginWindow.focus();
+      loginWindow = window.open('/auth/login?popup=1', 'quake3-login', 'popup,width=520,height=720');
+      if (!loginWindow) reconnectMessage.textContent = 'Allow the sign-in popup, then try again.';
+    });
+    const recovery = createConnectionRecovery({
+      identity,
+      reconnect: () => module._CL_WebReconnect(),
+      onStatus: (state, message) => {
+        reconnectPanel.hidden = state === 'connected';
+        reconnectMessage.textContent = message;
+        loginButton.hidden = state !== 'login';
+        if (state === 'login') document.exitPointerLock?.();
+      }
+    });
+    let activeEngine;
+    addEventListener('pagehide', () => {
+      recovery.close();
+      activeEngine?._CL_WebDisconnect();
+    });
+    loadingLog('Loading WebAssembly engine');
+    const startupConfig = [
+      `set password "${gamePassword}"`,
+      'set sv_pure 0',
+      'set net_enabled 1',
+      'set cl_motd 0',
+      `set web_identity_name "${playerName}"`,
+      'bind F9 togglemenu',
+      'bind MOUSE2 +moveup',
+      'set r_mode -2',
+      'set r_fullscreen 0',
+      'set r_picmip 0',
+      'set r_roundImagesDown 0',
+      'set r_detailTextures 1',
+      'set r_texturebits 32',
+      'set r_colorbits 32',
+      'set r_depthbits 24',
+      'set r_stencilbits 8',
+      'set r_ext_multisample 4',
+      'set r_ext_texture_filter_anisotropic 1',
+      'set r_ext_max_anisotropy 16',
+      'set r_arb_vertex_array_object 1',
+      'set r_simpleMipMaps 1',
+      'set r_textureMode GL_LINEAR_MIPMAP_LINEAR',
+      'set r_subdivisions 4',
+      'set r_lodbias -2',
+      'set r_facePlaneCull 1',
+      'set r_znear 4',
+      'set r_fastsky 0',
+      'set r_dynamiclight 1',
+      'set r_vertexLight 1',
+      'set r_overBrightBits 1',
+      'set model sarge',
+      'set headmodel sarge',
+      'set team_model sarge',
+      'set team_headmodel *sarge',
+      'set cg_simpleItems 0',
+      'set cg_shadows 0',
+      'set cg_brassTime 2500',
+      ''
+    ].join('\n');
+    const createEngine = (await import('/ioquake3.js')).default;
+    const module = await createEngine({
+      canvas,
+      websocket: {url: `${protocol}//${location.host}/ws`, subprotocol: 'binary'},
+      locateFile: (filename) => `/${filename}`,
+      onRuntimeInitialized() {
+        // SOCKFS adds websocket.on during runtime initialization, after preRun.
+        this.websocket.on('error', () => recovery.disconnected());
+        this.websocket.on('close', () => recovery.disconnected());
+        this.websocket.on('open', () => recovery.connected());
+      },
+      preRun: [async (engine) => {
+        engine.addRunDependency('game-files');
+        try {
+          for (const file of configuration[game]?.files || []) {
+            engine.FS.mkdirTree(file.dst);
+            const name = file.src.slice(file.src.lastIndexOf('/') + 1);
+            engine.FS.writeFile(`${file.dst}/${name}`, await bytes(file.src));
+          }
+          engine.FS.writeFile(`/${game}/autoexec.cfg`, startupConfig);
+          loadingLog(`Loaded /${game}/autoexec.cfg`);
+        } finally {
+          engine.removeRunDependency('game-files');
+        }
+      }],
+      print: (message) => {
+        console.log(message);
+        loadingLog(message);
+      },
+      printErr: (message) => {
+        console.log(message);
+        loadingLog(message);
+      }
+    });
+    activeEngine = module;
+    const gl = canvas.getContext('webgl2');
+    if (gl) console.info('Quake renderer', {
+      drawingBuffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
+      devicePixelRatio: window.devicePixelRatio || 1,
+      antialias: gl.getContextAttributes()?.antialias,
+      samples: gl.getParameter(gl.SAMPLES)
+    });
+    status.remove();
+    canvas.focus();
+  </script>
+</body>
+</html>

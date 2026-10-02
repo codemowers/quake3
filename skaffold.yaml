@@ -1,0 +1,54 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: quake3
+build:
+  platforms:
+    - linux/amd64
+  cluster:
+    dockerConfig:
+      secretName: zot-registry-cluster-push-kaniko
+  artifacts:
+    - image: quake3-server
+      context: .
+      kaniko:
+        dockerfile: engine/Dockerfile
+        target: game-server
+    - image: quake3-gateway
+      context: .
+      kaniko:
+        dockerfile: gateway/Dockerfile
+        target: web-gateway
+    - image: quake3-web
+      context: .
+      kaniko:
+        dockerfile: engine/Dockerfile
+        target: web-client
+    - image: quake3-data
+      context: game-data
+      kaniko:
+        dockerfile: Dockerfile
+        target: shareware-data
+deploy:
+  helm:
+    releases:
+      - name: quake3
+        chartPath: chart
+        valuesFiles:
+          - chart/values.yaml
+        setValues:
+          image.registryPrefix: ""
+        setValueTemplates:
+          images.server: "{{.IMAGE_FULLY_QUALIFIED_quake3_server}}"
+          images.gateway: "{{.IMAGE_FULLY_QUALIFIED_quake3_gateway}}"
+          images.web: "{{.IMAGE_FULLY_QUALIFIED_quake3_web}}"
+          images.data: "{{.IMAGE_FULLY_QUALIFIED_quake3_data}}"
+profiles:
+  - name: retail
+    patches:
+      - op: replace
+        path: /build/artifacts/3/kaniko/target
+        value: retail-data
+      - op: add
+        path: /deploy/helm/releases/0/valuesFiles/-
+        value: chart/values.retail-space.yaml

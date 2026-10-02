@@ -1,0 +1,88 @@
+# Admission expands this short hostname in Ingress, Certificate and OIDCClient.
+hostname: quake3
+imagePullSecret: ""
+
+web:
+  enabled: true
+
+game:
+  # Empty disables the password; otherwise use a quoted string of 1–64 letters/digits.
+  password: ""
+  # Dedicated-server flags, rendered once as seta <name> "<value>".
+  # Overlays override individual flags and inherit the other defaults.
+  cvars:
+    sv_hostname: Quake III Arena
+    sv_maxclients: 20
+    sv_pure: 0
+    sv_timeout: 15
+    # 0 free for all, 1 tournament, 2 single player, 3 team, 4 CTF.
+    g_gametype: 0
+    # Match limits: 0 disables the limit.
+    timelimit: 10
+    fraglimit: 20
+    # capturelimit: 8
+    # g_friendlyFire: 0
+    # g_allowVote: 1
+    # g_doWarmup: 1
+    # g_warmup: 20
+    # bot_minplayers: 4
+    g_motd: Sysadmin Fragged. Leader Election in Progress.
+  # Literal map/rotation commands. Keep browser settings in web/index.html.
+  # Shareware maps: q3dm1, q3dm7, q3dm17, q3tourney2.
+  # Retail additionally provides q3dm0–q3dm19, q3tourney1–q3tourney6,
+  # and q3ctf1–q3ctf4. Select a map present in your data image.
+  configTail: |
+    // Space rotation: replace the final map command with vstr rotation0.
+    // set rotation0 "map q3dm17; set nextmap vstr rotation0"
+    // Retail space alternatives: q3dm18, q3dm19, q3tourney6.
+    // Ground-map alternatives (excluded from the rotation): q3dm1, q3dm7.
+    map q3dm17
+
+udpLoadBalancer:
+  enabled: false
+  labels:
+    pool: internal
+  annotations: {}
+
+# Platform hosting conventions.
+# Admission expands hostnames and supplies the Certificate's <release>-tls name.
+ingress:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    issuerRef:
+      name: letsencrypt
+      kind: ClusterIssuer
+
+# Leave empty when images already contain fully qualified references (Skaffold).
+image:
+  registryPrefix: ""
+
+oidc:
+  enabled: true
+
+images:
+  server: quake3-server:latest
+  gateway: quake3-gateway:latest
+  web: quake3-web:latest
+  data: quake3-data:latest
+
+resources:
+  server:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  gateway:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  web:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      memory: 256Mi

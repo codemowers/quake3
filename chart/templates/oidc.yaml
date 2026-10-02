@@ -1,0 +1,38 @@
+{{- if and .Values.web.enabled .Values.oidc.enabled }}
+apiVersion: codemowers.cloud/v1
+kind: OIDCClient
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    skaffold.dev/keep: "true"
+    app.kubernetes.io/name: quake3
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+spec:
+  displayName: Quake III Arena
+  uri: https://{{ .Values.hostname }}/
+  redirectUris:
+    - https://{{ .Values.hostname }}/auth/callback
+  grantTypes:
+    - authorization_code
+  responseTypes:
+    - code
+  availableScopes:
+    - openid
+  overrideIncomingScopes: true
+  pkce: true
+---
+apiVersion: secretgenerator.mittwald.de/v1alpha1
+kind: StringSecret
+metadata:
+  name: {{ .Release.Name }}-session-signing
+  labels:
+    skaffold.dev/keep: "true"
+    app.kubernetes.io/name: quake3
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+spec:
+  forceRegenerate: false
+  fields:
+    - fieldName: session-secret
+      encoding: hex
+      length: "32"
+{{- end }}

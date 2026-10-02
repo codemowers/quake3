@@ -1,0 +1,21 @@
+{{- if and .Values.game.password (not (regexMatch "^[A-Za-z0-9]{1,64}$" .Values.game.password)) }}
+{{- fail "game.password must contain 1 to 64 letters or digits" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-game-config
+  labels:
+    skaffold.dev/keep: "true"
+    app.kubernetes.io/name: quake3
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+data:
+  server.cfg: |
+    set net_ip "{{ ternary "0.0.0.0" "127.0.0.1" .Values.udpLoadBalancer.enabled }}"
+    set net_ip6 "{{ ternary "::" "::1" .Values.udpLoadBalancer.enabled }}"
+    net_restart
+    set g_password {{ .Values.game.password | quote }}
+    {{- range $name, $value := .Values.game.cvars }}
+    seta {{ $name }} {{ $value | quote }}
+    {{- end }}
+    {{- .Values.game.configTail | nindent 4 }}

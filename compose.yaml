@@ -1,0 +1,72 @@
+services:
+  quake3-server:
+    user: "65535:65535"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+      target: game-server
+    image: quake3-server:latest
+    volumes:
+      - type: image
+        source: ${Q3_DATA_IMAGE:-quake3-data:latest}
+        target: /data/baseq3
+        read_only: true
+    tmpfs:
+      - /state:uid=65535,gid=65535,mode=0700,size=64m
+    restart: unless-stopped
+
+  web-gateway:
+    user: "65535:65535"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+      target: web-gateway
+    image: quake3-gateway:latest
+    depends_on:
+      quake3-server:
+        condition: service_started
+    environment:
+      Q3_BACKEND_HOST: quake3-server
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      OIDC_SESSION_SECRET: ${OIDC_SESSION_SECRET:-}
+    ports:
+      - 8080:8080/tcp
+    restart: unless-stopped
+
+  web-client:
+    user: "65535:65535"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+      target: web-client
+    image: quake3-web:latest
+    depends_on:
+      web-gateway:
+        condition: service_started
+    network_mode: service:web-gateway
+    tmpfs:
+      - /tmp:uid=65535,gid=65535,mode=0700,size=64m
+    volumes:
+      - type: image
+        source: ${Q3_DATA_IMAGE:-quake3-data:latest}
+        target: /data/baseq3
+        read_only: true
+    restart: unless-stopped

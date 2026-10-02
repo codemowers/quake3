@@ -1,0 +1,71 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: node:24.8.0-bookworm-slim@sha256:cadbfafeb6baf87eaaffa40b3640209c4b7fd38cebde65059d15bc39cd636b85
+    steps:
+      - uses: actions/checkout@v7
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  configuration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.20.0
+      - name: Validate Helm chart
+        run: |
+          helm lint --strict chart
+          for mode in websocket-oidc udp-websocket-password udp-only-password; do
+            helm template quake3 chart -f "chart/values.$mode.yaml" -f chart/values.map-rotation.yaml --api-versions cert-manager.io/v1/Certificate --api-versions monitoring.coreos.com/v1/PodMonitor >/dev/null
+          done
+          helm template quake3 chart -f chart/values.retail-space.yaml >/dev/null
+          helm template quake3 chart --set udpLoadBalancer.enabled=true --api-versions cert-manager.io/v1/Certificate >/dev/null
+          helm template quake3 chart --namespace chart-review --api-versions cert-manager.io/v1/Certificate >/dev/null
+          helm template quake3 chart --namespace chart-review --set hostname=quake.example --set imagePullSecret=registry --api-versions cert-manager.io/v1/Certificate >/dev/null
+          helm template quake3 chart --namespace chart-review --set oidc.enabled=false --api-versions cert-manager.io/v1/Certificate --api-versions monitoring.coreos.com/v1/PodMonitor >/dev/null
+          helm template arena chart --namespace chart-review --set hostname=arena.example --set image.registryPrefix=registry.dev.example/team --set ingress.className=traefik --set ingress.tls.secretName=arena-tls --set ingress.tls.issuerRef.name=example-issuer --set ingress.tls.issuerRef.kind=ClusterIssuer --api-versions cert-manager.io/v1/Certificate --api-versions monitoring.coreos.com/v1/PodMonitor >/dev/null
+      - name: Validate Compose configuration
+        env:
+          OIDC_ISSUER_URL: https://idp.example
+          OIDC_CLIENT_ID: quake3
+          OIDC_CLIENT_SECRET: validation-only
+          OIDC_REDIRECT_URI: https://quake.example/auth/callback
+          OIDC_SESSION_SECRET: validation-only-secret-32-bytes-long
+        run: docker compose config --quiet
+      - name: Lint GitHub Actions
+        run: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7 -color .github/workflows/*.yaml
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # Build executable images only: no PAK downloads, data-image builds or pushes.
+      - name: Build gateway and run regression tests
+        run: |
+          docker build -f gateway/Dockerfile --target test .
+          docker build -f gateway/Dockerfile --target web-gateway -t quake3-gateway:check .
+      - name: Build dedicated server
+        run: docker build -f engine/Dockerfile --target game-server -t quake3-server:check .
+      - name: Build browser client
+        run: docker build -f engine/Dockerfile --target web-client -t quake3-web:check .

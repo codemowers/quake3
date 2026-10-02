@@ -1,0 +1,45 @@
+# JavaScript dependencies and diagnostics
+node_modules/
+npm-debug.log*
+
+# Native and CMake build trees
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.a
+*.so
+
+# Emscripten output
+*.wasm
+*.data
+ioquake3.js
+ioq3ded.js
+
+# Downloaded/generated Quake data
+*.pk3
+*.run
+*.zip
+data/
+state/
+
+# Local tooling output
+.cache/
+.skaffold/
+skaffold.env
+
+# Local secrets, editor files, and reports
+.env
+.env.*
+.npmrc
+*.pem
+*.key
+coverage/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo

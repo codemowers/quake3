@@ -1,0 +1,672 @@
+--- a/code/client/cl_main.c
++++ b/code/client/cl_main.c
+@@ -25,6 +25,13 @@
+ #include "client.h"
+ #include <limits.h>
+ 
++#ifdef __EMSCRIPTEN__
++#include <emscripten/emscripten.h>
++EMSCRIPTEN_KEEPALIVE void CL_WebReconnect( void ) {
++	Cbuf_AddText( "disconnect\nconnect 127.0.0.1:27960\n" );
++}
++#endif
++
+ #include "../sys/sys_local.h"
+ #include "../sys/sys_loadlib.h"
+ 
+@@ -1481,6 +1488,13 @@
+ 		noGameRestart = qfalse;
+ }
+ 
++#ifdef __EMSCRIPTEN__
++EMSCRIPTEN_KEEPALIVE void CL_WebDisconnect( void ) {
++	// Page teardown cannot wait for a queued console command or another frame.
++	CL_Disconnect( qfalse );
++}
++#endif
++
+ 
+ /*
+ ===================
+@@ -3660,7 +3674,15 @@
+ 	cl_consoleKeys = Cvar_Get( "cl_consoleKeys", "~ ` 0x7e 0x60", CVAR_ARCHIVE);
+ 
+ 	// userinfo
+-	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE );
++#ifdef __EMSCRIPTEN__
++	{
++		const char *identityName = Cvar_VariableString( "web_identity_name" );
++		Cvar_Get ("name", identityName[0] ? identityName : "Player",
++				CVAR_USERINFO | CVAR_ROM );
++	}
++#else
++	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE );
++#endif
+ 	cl_rate = Cvar_Get ("rate", "25000", CVAR_USERINFO | CVAR_ARCHIVE );
+ 	Cvar_Get ("snaps", "20", CVAR_USERINFO | CVAR_ARCHIVE );
+ 	Cvar_Get ("model", "sarge", CVAR_USERINFO | CVAR_ARCHIVE );
+--- a/code/qcommon/common.c
++++ b/code/qcommon/common.c
+@@ -2846,6 +2846,10 @@
+ 		}
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	Cbuf_AddText( "connect 127.0.0.1:27960\n" );
++#endif
++
+ 	// start in full screen ui mode
+ 	Cvar_Set("r_uiFullScreen", "1");
+ 
+--- a/code/renderergl2/tr_extensions.c
++++ b/code/renderergl2/tr_extensions.c
+@@ -196,10 +196,16 @@
+ 	if (q_gl_version_at_least_3_0 || SDL_GL_ExtensionSupported(extension))
+ 	{
+ 		if (q_gl_version_at_least_3_0)
+ 		{
++#ifdef __EMSCRIPTEN__
++			// WebGL 2 has a usable default VAO, so retain the non-VAO
++			// attribute rebinding path when explicitly requested.
++			glRefConfig.vertexArrayObject = !!r_arb_vertex_array_object->integer;
++#else
+ 			// force VAO, core context requires it
+ 			glRefConfig.vertexArrayObject = qtrue;
++#endif
+ 		}
+ 		else
+ 		{
+ 			glRefConfig.vertexArrayObject = !!r_arb_vertex_array_object->integer;
+--- a/code/renderergl2/tr_glsl.c
++++ b/code/renderergl2/tr_glsl.c
+@@ -267,7 +267,13 @@
+ 
+ 		if (qglesMajorVersion >= 2)
+ 		{
+-			Q_strcat(dest, size, "precision mediump float;\n");
++			Q_strcat(dest, size,
++				"#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
++				"precision highp float;\n"
++				"#else\n"
++				"precision mediump float;\n"
++				"#endif\n"
++				"precision mediump int;\n");
+ 			Q_strcat(dest, size, "precision mediump sampler2DShadow;\n");
+ 		}
+ 
+@@ -298,7 +304,13 @@
+ 				Q_strcat(dest, size, extra);
+ 			}
+ 
+-			Q_strcat(dest, size, "precision mediump float;\n");
++			Q_strcat(dest, size,
++				"#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
++				"precision highp float;\n"
++				"#else\n"
++				"precision mediump float;\n"
++				"#endif\n"
++				"precision mediump int;\n");
+ 
+ 			if (glRefConfig.shadowSamplers)
+ 			{
+--- a/cmake/platforms/emscripten.cmake
++++ b/cmake/platforms/emscripten.cmake
+@@ -22,6 +22,6 @@
+     -sTOTAL_MEMORY=256MB
+     -sSTACK_SIZE=5MB
+-    -sMIN_WEBGL_VERSION=1
++    -sMIN_WEBGL_VERSION=2
+     -sMAX_WEBGL_VERSION=2
+     -sEXPORTED_RUNTIME_METHODS=FS,addRunDependency,removeRunDependency
+     -sEXIT_RUNTIME=1
+--- a/code/q3_ui/ui_playersettings.c
++++ b/code/q3_ui/ui_playersettings.c
+@@ -257,9 +257,6 @@
+ =================
+ */
+ static void PlayerSettings_SaveChanges( void ) {
+-	// name
+-	trap_Cvar_Set( "name", s_playersettings.name.field.buffer );
+-
+ 	// handicap
+ 	trap_Cvar_SetValue( "handicap", 100 - s_playersettings.handicap.curvalue * 5 );
+ 
+@@ -464,7 +461,6 @@
+ 	Menu_AddItem( &s_playersettings.menu, &s_playersettings.framel );
+ 	Menu_AddItem( &s_playersettings.menu, &s_playersettings.framer );
+ 
+-	Menu_AddItem( &s_playersettings.menu, &s_playersettings.name );
+ 	Menu_AddItem( &s_playersettings.menu, &s_playersettings.handicap );
+ 	Menu_AddItem( &s_playersettings.menu, &s_playersettings.effects );
+ 	Menu_AddItem( &s_playersettings.menu, &s_playersettings.model );
+--- a/code/q3_ui/ui_video.c
++++ b/code/q3_ui/ui_video.c
+@@ -667,52 +667,5 @@
+ 		break;
+ 	}
+ 	trap_Cvar_SetValue( "r_picmip", 3 - s_graphicsoptions.tq.curvalue );
+-	trap_Cvar_SetValue( "r_allowExtensions", s_graphicsoptions.allow_extensions.curvalue );
+-
+-	if( resolutionsDetected )
+-	{
+-		// search for builtin mode that matches the detected mode
+-		int mode;
+-		if ( s_graphicsoptions.mode.curvalue == -1
+-			|| s_graphicsoptions.mode.curvalue >= ARRAY_LEN( detectedResolutions ) )
+-			s_graphicsoptions.mode.curvalue = 0;
+-
+-		mode = GraphicsOptions_FindBuiltinResolution( s_graphicsoptions.mode.curvalue );
+-		if( mode == -1 )
+-		{
+-			char w[ 16 ], h[ 16 ];
+-			Q_strncpyz( w, detectedResolutions[ s_graphicsoptions.mode.curvalue ], sizeof( w ) );
+-			*strchr( w, 'x' ) = 0;
+-			Q_strncpyz( h,
+-					strchr( detectedResolutions[ s_graphicsoptions.mode.curvalue ], 'x' ) + 1, sizeof( h ) );
+-			trap_Cvar_Set( "r_customwidth", w );
+-			trap_Cvar_Set( "r_customheight", h );
+-		}
+-
+-		trap_Cvar_SetValue( "r_mode", mode );
+-	}
+-	else
+-		trap_Cvar_SetValue( "r_mode", s_graphicsoptions.mode.curvalue );
+-
+-	trap_Cvar_SetValue( "r_fullscreen", s_graphicsoptions.fs.curvalue );
+-	switch ( s_graphicsoptions.colordepth.curvalue )
+-	{
+-	case 0:
+-		trap_Cvar_SetValue( "r_colorbits", 0 );
+-		trap_Cvar_SetValue( "r_depthbits", 0 );
+-		trap_Cvar_Reset( "r_stencilbits" );
+-		break;
+-	case 1:
+-		trap_Cvar_SetValue( "r_colorbits", 16 );
+-		trap_Cvar_SetValue( "r_depthbits", 16 );
+-		trap_Cvar_SetValue( "r_stencilbits", 0 );
+-		break;
+-	case 2:
+-		trap_Cvar_SetValue( "r_colorbits", 32 );
+-		trap_Cvar_SetValue( "r_depthbits", 24 );
+-		trap_Cvar_SetValue( "r_stencilbits", 8 );
+-		break;
+-	}
+-	trap_Cvar_SetValue( "r_vertexLight", s_graphicsoptions.lighting.curvalue );
+ 
+ 	if ( s_graphicsoptions.geometry.curvalue == 2 )
+@@ -1172,6 +1126,7 @@
+ 	s_graphicsoptions.fs.itemnames	      = enabled_names;
+ 	y += BIGCHAR_HEIGHT+2;
+ 
++	y = s_graphicsoptions.list.generic.y + 2 * ( BIGCHAR_HEIGHT + 2 );
+ 	// references/modifies "r_vertexLight"
+ 	s_graphicsoptions.lighting.generic.type  = MTYPE_SPINCONTROL;
+ 	s_graphicsoptions.lighting.generic.name	 = "Lighting:";
+@@ -1260,18 +1215,10 @@
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.network );
+ 
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.list );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.driver );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.allow_extensions );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.ratio );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.mode );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.colordepth );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.fs );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.lighting );
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.geometry );
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.tq );
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.texturebits );
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.filter );
+-	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.driverinfo );
+ 
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.back );
+ 	Menu_AddItem( &s_graphicsoptions.menu, ( void * ) &s_graphicsoptions.apply );
+--- a/code/q3_ui/ui_menu.c
++++ b/code/q3_ui/ui_menu.c
+@@ -274,15 +274,5 @@
+ 	trap_Cvar_Set( "sv_killserver", "1" );
+ 
+-	if( !uis.demoversion && !ui_cdkeychecked.integer ) {
+-		char	key[17];
+-
+-		trap_GetCDKey( key, sizeof(key) );
+-		if( trap_VerifyCDKey( key, NULL ) == qfalse ) {
+-			UI_CDKeyMenu();
+-			return;
+-		}
+-	}
+-	
+ 	memset( &s_main, 0 ,sizeof(mainmenu_t) );
+ 	memset( &s_errorMessage, 0 ,sizeof(errorMessage_t) );
+ 
+@@ -414,7 +414,6 @@
+ 	if ( !uis.demoversion ) {
+ 		Menu_AddItem( &s_main.menu,	&s_main.mods );
+ 	}
+-	Menu_AddItem( &s_main.menu,	&s_main.exit );             
+ 
+ 	trap_Key_SetCatcher( KEYCATCH_UI );
+ 	uis.menusp = 0;
+--- a/code/q3_ui/ui_ingame.c
++++ b/code/q3_ui/ui_ingame.c
+@@ -317,7 +317,6 @@
+ 	Menu_AddItem( &s_ingame.menu, &s_ingame.restart );
+ 	Menu_AddItem( &s_ingame.menu, &s_ingame.resume );
+ 	Menu_AddItem( &s_ingame.menu, &s_ingame.leave );
+-	Menu_AddItem( &s_ingame.menu, &s_ingame.quit );
+ }
+ 
+ 
+--- a/code/q3_ui/ui_setup.c
++++ b/code/q3_ui/ui_setup.c
+@@ -293,7 +293,5 @@
+ 	Menu_AddItem( &setupMenuInfo.menu, &setupMenuInfo.setupcontrols );
+-	Menu_AddItem( &setupMenuInfo.menu, &setupMenuInfo.setupsystem );
+ 	Menu_AddItem( &setupMenuInfo.menu, &setupMenuInfo.game );
+-	Menu_AddItem( &setupMenuInfo.menu, &setupMenuInfo.cdkey );
+ //	Menu_AddItem( &setupMenuInfo.menu, &setupMenuInfo.load );
+ //	Menu_AddItem( &setupMenuInfo.menu, &setupMenuInfo.save );
+ 	if( !trap_Cvar_VariableValue( "cl_paused" ) ) {
+--- a/code/cgame/cg_drawtools.c
++++ b/code/cgame/cg_drawtools.c
+@@ -31,14 +31,8 @@
+ ================
+ */
+ void CG_AdjustFrom640( float *x, float *y, float *w, float *h ) {
+-#if 0
+-	// adjust for wide screens
+-	if ( cgs.glconfig.vidWidth * 480 > cgs.glconfig.vidHeight * 640 ) {
+-		*x += 0.5 * ( cgs.glconfig.vidWidth - ( cgs.glconfig.vidHeight * 640 / 480 ) );
+-	}
+-#endif
+-	// scale for screen sizes
+-	*x *= cgs.screenXScale;
++	// Keep glyphs and icons square; the caller chooses the HUD group's anchor.
++	*x = *x * cgs.screenXScale + cgs.screenXBias;
+ 	*y *= cgs.screenYScale;
+ 	*w *= cgs.screenXScale;
+ 	*h *= cgs.screenYScale;
+--- a/code/cgame/cg_main.c
++++ b/code/cgame/cg_main.c
+@@ -1879,6 +1879,10 @@
+ 	trap_GetGlconfig( &cgs.glconfig );
+ 	cgs.screenXScale = cgs.glconfig.vidWidth / 640.0;
+ 	cgs.screenYScale = cgs.glconfig.vidHeight / 480.0;
++	if ( cgs.screenXScale > cgs.screenYScale ) {
++		cgs.screenXScale = cgs.screenYScale;
++	}
++	cgs.screenXBias = 0.5f * (cgs.glconfig.vidWidth - 640.0f * cgs.screenXScale);
+ 
+ 	// get the gamestate from the client system
+ 	trap_GetGameState( &cgs.gameState );
+--- a/code/cgame/cg_draw.c
++++ b/code/cgame/cg_draw.c
+@@ -517,6 +517,7 @@
+ */
+ #ifndef MISSIONPACK
+ static void CG_DrawStatusBar( void ) {
++	float centerBias = cgs.screenXBias;
+ 	int			color;
+ 	centity_t	*cent;
+ 	playerState_t	*ps;
+@@ -537,13 +538,14 @@
+ 	}
+ 
+ 	// draw the team background
+-	CG_DrawTeamBackground( 0, 420, 640, 60, 0.33f, cg.snap->ps.persistant[PERS_TEAM] );
++	CG_DrawTeamBackground( -centerBias / cgs.screenXScale, 420, cgs.glconfig.vidWidth / cgs.screenXScale, 60, 0.33f, cg.snap->ps.persistant[PERS_TEAM] );
+ 
+ 	cent = &cg_entities[cg.snap->ps.clientNum];
+ 	ps = &cg.snap->ps;
+ 
+ 	VectorClear( angles );
+ 
++	cgs.screenXBias = 0;
+ 	// draw any 3D icons first, so the changes back to 2D are minimized
+ 	if ( cent->currentState.weapon && cg_weapons[ cent->currentState.weapon ].ammoModel ) {
+ 		origin[0] = 70;
+@@ -554,6 +556,7 @@
+ 					   cg_weapons[ cent->currentState.weapon ].ammoModel, 0, origin, angles );
+ 	}
+ 
++	cgs.screenXBias = centerBias;
+ 	CG_DrawStatusBarHead( 185 + CHAR_WIDTH*3 + TEXT_ICON_SPACE );
+ 
+ 	if( cg.predictedPlayerState.powerups[PW_REDFLAG] ) {
+@@ -564,6 +567,7 @@
+ 		CG_DrawStatusBarFlag( 185 + CHAR_WIDTH*3 + TEXT_ICON_SPACE + ICON_SIZE, TEAM_FREE );
+ 	}
+ 
++	cgs.screenXBias = 2.0f * centerBias;
+ 	if ( ps->stats[ STAT_ARMOR ] ) {
+ 		origin[0] = 90;
+ 		origin[1] = 0;
+@@ -572,6 +576,7 @@
+ 		CG_Draw3DModel( 370 + CHAR_WIDTH*3 + TEXT_ICON_SPACE, 432, ICON_SIZE, ICON_SIZE,
+ 					   cgs.media.armorModel, 0, origin, angles );
+ 	}
++	cgs.screenXBias = 0;
+ 	//
+ 	// ammo
+ 	//
+@@ -606,6 +611,7 @@
+ 		}
+ 	}
+ 
++	cgs.screenXBias = centerBias;
+ 	//
+ 	// health
+ 	//
+@@ -627,6 +633,7 @@
+ 	trap_R_SetColor( hcolor );
+ 
+ 
++	cgs.screenXBias = 2.0f * centerBias;
+ 	//
+ 	// armor
+ 	//
+@@ -641,6 +648,7 @@
+ 		}
+ 
+ 	}
++	cgs.screenXBias = centerBias;
+ }
+ #endif
+ 
+@@ -1619,7 +1627,9 @@
+ 	y = 480 - 48;
+ #endif
+ 
++	cgs.screenXBias *= 2;
+ 	CG_DrawPic( x, y, 48, 48, trap_R_RegisterShader("gfx/2d/net.tga" ) );
++	cgs.screenXBias *= 0.5f;
+ }
+ 
+ 
+@@ -1655,13 +1665,16 @@
+ #endif
+ 
+ 	trap_R_SetColor( NULL );
++	cgs.screenXBias *= 2;
+ 	CG_DrawPic( x, y, 48, 48, cgs.media.lagometerShader );
++	cgs.screenXBias *= 0.5f;
+ 
+ 	ax = x;
+ 	ay = y;
+ 	aw = 48;
+ 	ah = 48;
+ 	CG_AdjustFrom640( &ax, &ay, &aw, &ah );
++	ax += cgs.screenXBias;
+ 
+ 	color = -1;
+ 	range = ah / 3;
+@@ -1732,7 +1745,9 @@
+ 	trap_R_SetColor( NULL );
+ 
+ 	if ( cg_nopredict.integer || cg_synchronousClients.integer ) {
++		cgs.screenXBias *= 2;
+ 		CG_DrawBigString( x, y, "snc", 1.0 );
++		cgs.screenXBias *= 0.5f;
+ 	}
+ 
+ 	CG_DrawDisconnect();
+@@ -1904,6 +1919,8 @@
+ 	x = cg_crosshairX.integer;
+ 	y = cg_crosshairY.integer;
+ 	CG_AdjustFrom640( &x, &y, &w, &h );
++	// The crosshair is already positioned relative to the actual viewport.
++	x -= cgs.screenXBias;
+ 
+ 	ca = cg_drawCrosshair.integer;
+ 	if (ca < 0) {
+@@ -2521,6 +2538,8 @@
+ */
+ static void CG_Draw2D(stereoFrame_t stereoFrame)
+ {
++	float centerBias = 0.5f * (cgs.glconfig.vidWidth - 640.0f * cgs.screenXScale);
++	cgs.screenXBias = centerBias;
+ #ifdef MISSIONPACK
+ 	if (cgs.orderPending && cg.time > cgs.orderTime) {
+ 		CG_CheckOrderPending();
+@@ -2576,7 +2595,9 @@
+ 			CG_DrawWeaponSelect();
+ 
+ #ifndef MISSIONPACK
++			cgs.screenXBias = 2.0f * centerBias;
+ 			CG_DrawHoldableItem();
++			cgs.screenXBias = centerBias;
+ #else
+ 			//CG_DrawPersistantPowerup();
+ #endif
+@@ -2584,6 +2605,7 @@
+ 		}
+ 	}
+ 
++	cgs.screenXBias = 0;
+ 	if ( cgs.gametype >= GT_TEAM ) {
+ #ifndef MISSIONPACK
+ 		CG_DrawTeamInfo();
+@@ -2593,7 +2615,9 @@
+ 	CG_DrawVote();
+ 	CG_DrawTeamVote();
+ 
++	cgs.screenXBias = centerBias;
+ 	CG_DrawLagometer();
++	cgs.screenXBias = 2.0f * centerBias;
+ 
+ #ifdef MISSIONPACK
+ 	if (!cg_paused.integer) {
+@@ -2605,8 +2629,10 @@
+ 
+ #ifndef MISSIONPACK
+ 	CG_DrawLowerRight();
++	cgs.screenXBias = 0;
+ 	CG_DrawLowerLeft();
+ #endif
++	cgs.screenXBias = centerBias;
+ 
+ 	if ( !CG_DrawFollow() ) {
+ 		CG_DrawWarmup();
+--- a/code/cgame/cg_view.c
++++ b/code/cgame/cg_view.c
+@@ -517,6 +517,12 @@
+ 		}
+ 	}
+ 
++	// Treat cg_fov as a 4:3 reference: ultrawide adds horizontal view,
++	// rather than cropping the top and bottom of the scene.
++	if ( cg.refdef.width * 480 > cg.refdef.height * 640 ) {
++		fov_x = atan2( tan( fov_x * M_PI / 360.0f ) *
++			(0.75f * cg.refdef.width / cg.refdef.height), 1.0f ) * 360.0f / M_PI;
++	}
+ 	x = cg.refdef.width / tan( fov_x / 360 * M_PI );
+ 	fov_y = atan2( cg.refdef.height, x );
+ 	fov_y = fov_y * 360 / M_PI;
+--- a/code/q3_ui/ui_local.h
++++ b/code/q3_ui/ui_local.h
+@@ -557,6 +557,7 @@
+ 	float				xscale;
+ 	float				yscale;
+ 	float				bias;
++	float				ybias;
+ 	qboolean			demoversion;
+ 	qboolean			firstdraw;
+ } uiStatic_t;
+--- a/code/q3_ui/ui_atoms.c
++++ b/code/q3_ui/ui_atoms.c
+@@ -352,7 +352,7 @@
+ 	trap_R_SetColor( color );
+ 	
+ 	ax = x * uis.xscale + uis.bias;
+-	ay = y * uis.yscale;
++	ay = y * uis.yscale + uis.ybias;
+ 
+ 	s = str;
+ 	while ( *s )
+@@ -462,7 +462,7 @@
+ 	trap_R_SetColor( color );
+ 	
+ 	ax = x * uis.xscale + uis.bias;
+-	ay = y * uis.yscale;
++	ay = y * uis.yscale + uis.ybias;
+ 
+ 	s = str;
+ 	while ( *s )
+@@ -657,7 +657,7 @@
+ 	trap_R_SetColor( color );
+ 	
+ 	ax = x * uis.xscale + uis.bias;
+-	ay = y * uis.yscale;
++	ay = y * uis.yscale + uis.ybias;
+ 	aw = charw * uis.xscale;
+ 	ah = charh * uis.yscale;
+ 
+@@ -1075,18 +1075,14 @@
+ 	// cache redundant calulations
+ 	trap_GetGlconfig( &uis.glconfig );
+ 
+-	// for 640x480 virtualized screen
+-	uis.xscale = uis.glconfig.vidWidth * (1.0/640.0);
+-	uis.yscale = uis.glconfig.vidHeight * (1.0/480.0);
+-	if ( uis.glconfig.vidWidth * 480 > uis.glconfig.vidHeight * 640 ) {
+-		// wide screen
+-		uis.bias = 0.5 * ( uis.glconfig.vidWidth - ( uis.glconfig.vidHeight * (640.0/480.0) ) );
+-		uis.xscale = uis.yscale;
+-	}
+-	else {
+-		// no wide screen
+-		uis.bias = 0;
+-	}
++	// A centered, proportionate menu at 80% of the available 4:3 area.
++	uis.xscale = uis.glconfig.vidWidth / 640.0f;
++	uis.yscale = uis.glconfig.vidHeight / 480.0f;
++	if ( uis.xscale > uis.yscale ) uis.xscale = uis.yscale;
++	uis.xscale *= 0.8f;
++	uis.yscale = uis.xscale;
++	uis.bias = 0.5f * (uis.glconfig.vidWidth - 640.0f * uis.xscale);
++	uis.ybias = 0.5f * (uis.glconfig.vidHeight - 480.0f * uis.yscale);
+ 
+ 	// initialize the menu system
+ 	Menu_Cache();
+@@ -1105,7 +1101,7 @@
+ void UI_AdjustFrom640( float *x, float *y, float *w, float *h ) {
+ 	// expect valid pointers
+ 	*x = *x * uis.xscale + uis.bias;
+-	*y *= uis.yscale;
++	*y = *y * uis.yscale + uis.ybias;
+ 	*w *= uis.xscale;
+ 	*h *= uis.yscale;
+ }
+@@ -1214,10 +1210,10 @@
+ 		{
+ 			// draw the background
+ 			if( uis.activemenu->showlogo ) {
+-				UI_DrawHandlePic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, uis.menuBackShader );
++				trap_R_DrawStretchPic( 0, 0, uis.glconfig.vidWidth, uis.glconfig.vidHeight, 0, 0, 1, 1, uis.menuBackShader );
+ 			}
+ 			else {
+-				UI_DrawHandlePic( 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, uis.menuBackNoLogoShader );
++				trap_R_DrawStretchPic( 0, 0, uis.glconfig.vidWidth, uis.glconfig.vidHeight, 0, 0, 1, 1, uis.menuBackNoLogoShader );
+ 			}
+ 		}
+ 
+--- a/code/sdl/sdl_glimp.c
++++ b/code/sdl/sdl_glimp.c
+@@ -30,6 +30,9 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <math.h>
++#ifdef __EMSCRIPTEN__
++#include <emscripten/emscripten.h>
++#endif
+ 
+ #include "../renderercommon/tr_common.h"
+ #include "../sys/sys_local.h"
+@@ -481,6 +484,12 @@
+ 		ri.Printf( PRINT_ALL, " invalid mode\n" );
+ 		return RSERR_INVALID_MODE;
+ 	}
++#ifdef __EMSCRIPTEN__
++	// CSS sizes the canvas in logical pixels; render at physical pixel density.
++	glConfig.vidWidth = EM_ASM_INT({ return Math.max(1, Math.round(window.innerWidth * (window.devicePixelRatio || 1))); });
++	glConfig.vidHeight = EM_ASM_INT({ return Math.max(1, Math.round(window.innerHeight * (window.devicePixelRatio || 1))); });
++	glConfig.windowAspect = (float)glConfig.vidWidth / glConfig.vidHeight;
++#endif
+ 	ri.Printf( PRINT_ALL, " %d %d\n", glConfig.vidWidth, glConfig.vidHeight);
+ 
+ 	// Center window
+--- a/code/sdl/sdl_input.c
++++ b/code/sdl/sdl_input.c
+@@ -31,6 +31,9 @@
+ #include <stdlib.h>
+ 
+ #include "../client/client.h"
++#ifdef __EMSCRIPTEN__
++#include <emscripten/emscripten.h>
++#endif
+ #include "../sys/sys_local.h"
+ 
+ #if !SDL_VERSION_ATLEAST(2, 0, 17)
+@@ -1268,6 +1271,22 @@
+ 
+ 	IN_ProcessEvents( );
+ 
++#ifdef __EMSCRIPTEN__
++	// CSS can resize the viewport without SDL receiving a window resize event.
++	// Include pixel density so browser zoom and moving between displays work too.
++	{
++		static int lastWidth, lastHeight;
++		int width = EM_ASM_INT({ return Math.max(1, Math.round(window.innerWidth * (window.devicePixelRatio || 1))); });
++		int height = EM_ASM_INT({ return Math.max(1, Math.round(window.innerHeight * (window.devicePixelRatio || 1))); });
++		if ( width != lastWidth || height != lastHeight ) {
++			lastWidth = width;
++			lastHeight = height;
++			vidRestartTime = (width != cls.glconfig.vidWidth || height != cls.glconfig.vidHeight)
++				? Sys_Milliseconds() + 200 : 0;
++		}
++	}
++#endif
++
+ 	// Set event time for next frame to earliest possible time an event could happen
+ 	in_eventTime = Sys_Milliseconds( );
+ 
+--- a/code/qcommon/files.c
++++ b/code/qcommon/files.c
+@@ -3565,7 +3565,10 @@
+ 				&& strlen(pakBasename) == 4 && !Q_stricmpn( pakBasename, "pak", 3 )
+ 				&& pakBasename[3] >= '0' && pakBasename[3] <= '0' + NUM_ID_PAKS - 1)
+ 		{
+-			if( curpack->checksum != pak_checksums[pakBasename[3]-'0'] )
++			// This distribution installs the verified demo pak alongside point-release paks.
++			if( pakBasename[3] == '0' && curpack->checksum == DEMO_PAK0_CHECKSUM )
++				Com_Printf( "Using official Quake III demo pak0.pk3\n" );
++			else if( curpack->checksum != pak_checksums[pakBasename[3]-'0'] )
+ 			{
+ 				if(pakBasename[3] == '0')
+ 				{
+--- a/code/qcommon/net_ip.c
++++ b/code/qcommon/net_ip.c
+@@ -821,7 +821,9 @@
+ 	SOCKET				newsocket;
+ 	struct sockaddr_in	address;
+ 	ioctlarg_t			_true = 1;
++#ifndef __EMSCRIPTEN__
+ 	int					i = 1;
++#endif
+ 
+ 	*err = 0;
+ 
+@@ -845,10 +847,12 @@
+ 		return INVALID_SOCKET;
+ 	}
+ 
+-	// make it broadcast capable
++#ifndef __EMSCRIPTEN__
++	// Browser sockets use the WebSocket gateway and cannot broadcast on a LAN.
+ 	if( setsockopt( newsocket, SOL_SOCKET, SO_BROADCAST, (char *) &i, sizeof(i) ) == SOCKET_ERROR ) {
+ 		Com_Printf( "WARNING: NET_IPSocket: setsockopt SO_BROADCAST: %s\n", NET_ErrorString() );
+ 	}
++#endif
+ 
+ 	if( !net_interface || !net_interface[0]) {
+ 		address.sin_family = AF_INET;

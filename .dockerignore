@@ -1,0 +1,25 @@
+# Engine and gateway builds share sources and regression tests at the root.
+# Only declared build inputs enter the context; local files stay excluded.
+**
+!package.json
+!package-lock.json
+!engine/
+engine/**
+!engine/Dockerfile
+!engine/server.cfg
+!engine/patches/
+engine/patches/**
+!engine/patches/*.diff
+!gateway/
+gateway/**
+!gateway/Dockerfile
+!gateway/*.js
+!web/
+web/**
+!web/index.html
+!web/client-config.json
+!web/reconnect.js
+!web/nginx.conf
+!test/
+test/**
+!test/*.test.js

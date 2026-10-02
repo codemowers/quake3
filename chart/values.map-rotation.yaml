@@ -1,0 +1,18 @@
+# Space-only rotation, compatible with the default shareware data.
+# Uncomment the retail space maps and update nextmap links when using retail data.
+game:
+  cvars:
+    sv_hostname: Rotating Quake III
+    sv_maxclients: 16
+    timelimit: 15
+    fraglimit: 30
+  configTail: |
+    set rotation0 "map q3dm17; set nextmap vstr rotation0"
+    // Retail space maps: link rotation0 to rotation1 to include these.
+    // set rotation1 "map q3dm18; set nextmap vstr rotation2"
+    // set rotation2 "map q3dm19; set nextmap vstr rotation3"
+    // set rotation3 "map q3tourney6; set nextmap vstr rotation0"
+    // Ground-map alternatives, excluded from the space rotation:
+    // map q3dm7
+    // map q3dm1
+    vstr rotation0

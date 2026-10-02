@@ -1,0 +1,8 @@
+web:
+  enabled: true
+oidc:
+  enabled: true
+udpLoadBalancer:
+  enabled: false
+game:
+  password: ""

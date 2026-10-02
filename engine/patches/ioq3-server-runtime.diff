@@ -1,0 +1,39 @@
+--- a/code/qcommon/files.c
++++ b/code/qcommon/files.c
+@@ -256,6 +256,8 @@
+ static	cvar_t		*fs_microsoftstorepath;
+ 
+ static	cvar_t		*fs_basepath;
++static	cvar_t		*fs_configpath;
++static	cvar_t		*fs_assetpath;
+ static	cvar_t		*fs_basegame;
+ static	cvar_t		*fs_gamedirvar;
+ static	searchpath_t	*fs_searchpaths;
+@@ -3342,6 +3344,9 @@
+ static void FS_InitPathVars( void ) {
+ 	memset( fs_pathVars, 0, sizeof( fs_pathVars ) );
+ 
++	// Read-only deployment config and compiled assets precede writable state and PAKs.
++	FS_AddPathVar( fs_configpath );
++	FS_AddPathVar( fs_assetpath );
+ 	FS_AddPathVar( fs_homeconfigpath );
+ 	FS_AddPathVar( fs_homedatapath );
+ 	FS_AddPathVar( fs_homestatepath );
+@@ -3378,6 +3383,8 @@
+ 
+ 	fs_debug = Cvar_Get( "fs_debug", "0", 0 );
+ 	fs_basepath = Cvar_Get ("fs_basepath", Sys_DefaultInstallPath(), CVAR_INIT|CVAR_PROTECTED );
++	fs_configpath = Cvar_Get("fs_configpath", "", CVAR_INIT|CVAR_PROTECTED);
++	fs_assetpath = Cvar_Get("fs_assetpath", "", CVAR_INIT|CVAR_PROTECTED);
+ 	fs_basegame = Cvar_Get ("fs_basegame", "", CVAR_INIT );
+ 	fs_homeconfigpath = Cvar_Get ("fs_homeconfigpath", configPath, CVAR_INIT|CVAR_PROTECTED );
+ 	fs_homedatapath = Cvar_Get ("fs_homedatapath", dataPath, CVAR_INIT|CVAR_PROTECTED );
+@@ -4117,6 +4124,8 @@
+ 	// line variable sets don't happen until after the filesystem
+ 	// has already been initialized
+ 	Com_StartupVariable("fs_basepath");
++	Com_StartupVariable("fs_configpath");
++	Com_StartupVariable("fs_assetpath");
+ 	Com_StartupVariable("fs_homepath");
+ 	Com_StartupVariable("fs_homeconfigpath");
+ 	Com_StartupVariable("fs_homedatapath");

@@ -1,0 +1,134 @@
+{{- $registry := trimSuffix "/" .Values.image.registryPrefix }}
+{{- if and (not .Values.web.enabled) (not .Values.udpLoadBalancer.enabled) }}
+{{- fail "Enable web or udpLoadBalancer so players can reach the game server" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    <<: &selectorLabels
+      app.kubernetes.io/name: quake3
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    skaffold.dev/keep: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: *selectorLabels
+  template:
+    metadata:
+      labels: *selectorLabels
+      annotations:
+        checksum/game-config: {{ include (print $.Template.BasePath "/game-config.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ . | quote }}
+      {{- end }}
+      containers:
+        - name: game-server
+          image: {{ printf "%s/%s" $registry .Values.images.server | trimPrefix "/" | quote }}
+          imagePullPolicy: Always
+          resources:
+            {{- toYaml .Values.resources.server | nindent 12 }}
+          volumeMounts:
+            - name: game-config
+              mountPath: /config/baseq3
+              readOnly: true
+            - name: game-data
+              mountPath: /data/baseq3
+              readOnly: true
+            - name: state
+              mountPath: /state
+        {{- if .Values.web.enabled }}
+        - name: gateway
+          image: {{ printf "%s/%s" $registry .Values.images.gateway | trimPrefix "/" | quote }}
+          imagePullPolicy: Always
+          env:
+            - name: Q3_PASSWORD_REQUIRED
+              value: {{ (not (empty .Values.game.password)) | quote }}
+            - name: Q3_BACKEND_HOST
+              value: 127.0.0.1
+            {{- if .Values.oidc.enabled }}
+            - name: OIDC_IDP_DISPLAY_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: oidc-client-{{ .Release.Name }}-owner-secrets
+                  key: OIDC_IDP_DISPLAY_NAME
+            - name: OIDC_ISSUER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: oidc-client-{{ .Release.Name }}-owner-secrets
+                  key: OIDC_IDP_URI
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: oidc-client-{{ .Release.Name }}-owner-secrets
+                  key: OIDC_CLIENT_ID
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oidc-client-{{ .Release.Name }}-owner-secrets
+                  key: OIDC_CLIENT_SECRET
+            - name: OIDC_REDIRECT_URI
+              valueFrom:
+                secretKeyRef:
+                  name: oidc-client-{{ .Release.Name }}-owner-secrets
+                  key: OIDC_REDIRECT_URIS
+            - name: OIDC_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-session-signing
+                  key: session-secret
+            {{- end }}
+          ports:
+            - name: gateway-health
+              containerPort: 8082
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: gateway-health
+          resources:
+            {{- toYaml .Values.resources.gateway | nindent 12 }}
+        - name: web
+          image: {{ printf "%s/%s" $registry .Values.images.web | trimPrefix "/" | quote }}
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: web-health
+              containerPort: 8083
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: web-health
+          resources:
+            {{- toYaml .Values.resources.web | nindent 12 }}
+          volumeMounts:
+            - name: game-data
+              mountPath: /data/baseq3
+              readOnly: true
+            - name: web-tmp
+              mountPath: /tmp
+        {{- end }}
+      volumes:
+        - name: game-config
+          configMap:
+            name: {{ .Release.Name }}-game-config
+        - name: game-data
+          image:
+            reference: {{ printf "%s/%s" $registry .Values.images.data | trimPrefix "/" | quote }}
+            pullPolicy: Always
+        - name: state
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if .Values.web.enabled }}
+        - name: web-tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- end }}

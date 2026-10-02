@@ -1,0 +1,18 @@
+# Skaffold's retail profile builds this data image and applies this overlay.
+images:
+  data: quake3-data:retail
+
+game:
+  cvars:
+    sv_hostname: Quake III Space Arena
+    timelimit: 15
+    fraglimit: 30
+  configTail: |
+    set rotation0 "map q3dm17; set nextmap vstr rotation1"
+    set rotation1 "map q3dm18; set nextmap vstr rotation2"
+    set rotation2 "map q3dm19; set nextmap vstr rotation3"
+    set rotation3 "map q3tourney6; set nextmap vstr rotation0"
+    // Ground-map alternatives, excluded from the space rotation:
+    // map q3dm1
+    // map q3dm7
+    vstr rotation0

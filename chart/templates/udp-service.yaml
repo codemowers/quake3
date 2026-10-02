@@ -1,0 +1,30 @@
+{{- if .Values.udpLoadBalancer.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-udp
+  labels:
+    <<: &selectorLabels
+      app.kubernetes.io/name: quake3
+      app.kubernetes.io/instance: {{ .Release.Name | quote }}
+    skaffold.dev/keep: "true"
+    {{- with .Values.udpLoadBalancer.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.udpLoadBalancer.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  ipFamilies:
+    - IPv6
+    - IPv4
+  ipFamilyPolicy: PreferDualStack
+  selector: *selectorLabels
+  ports:
+    - name: game
+      port: 27961
+      targetPort: 27961
+      protocol: UDP
+{{- end }}
